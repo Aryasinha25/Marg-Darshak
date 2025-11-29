@@ -8,6 +8,7 @@ import tt from "@tomtom-international/web-sdk-maps";
 import * as ttServices from "@tomtom-international/web-sdk-services";
 import "@tomtom-international/web-sdk-maps/dist/maps.css";
 import markerIcon from "@/assets/marg-darshak-icon.png";
+import { useRoute } from "@/contexts/RouteContext";
 
 interface MapViewProps {
   onAddMarker: () => void;
@@ -21,141 +22,656 @@ const MapView = ({ onAddMarker, accessibilityMode = false }: MapViewProps) => {
   const [map, setMap] = useState<tt.Map | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [startPoint, setStartPoint] = useState<{ lat: number; lng: number } | null>(null);
-  const [endPoint, setEndPoint] = useState<{ lat: number; lng: number } | null>(null);
-  const [routes, setRoutes] = useState<any>(null);
+  const [routeInfo, setRouteInfo] = useState<{distance: string, duration: string} | null>(null);
+  const [userCoords, setUserCoords] = useState<{lat: number; lng: number} | null>(null);
+  const [userAddress, setUserAddress] = useState<string | null>(null);
+  const mapElement = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+  const userLocationMarkerRef = useRef<any>(null);
+  const watchIdRef = useRef<number | null>(null);
+  const accuracyCircleRef = useRef<any>(null);
+  const routeLayerRef = useRef<string | null>(null);
+  const route1LayerRef = useRef<string | null>(null);
+  const route2LayerRef = useRef<string | null>(null);
+  const destinationMarkerRef = useRef<any>(null);
+
+  const { setCoordinates } = useRoute();
+
+  // Type to color mapping
+  const getMarkerColor = (type: string): string => {
+    const typeMap: Record<string, string> = {
+      ramp: "#10b981", // green (accessible-high)
+      elevator: "#3b82f6", // blue
+      lift: "#3b82f6", // blue
+      tactile_path: "#f59e0b", // orange (accessible-medium)
+      tactile: "#f59e0b", // orange
+      walkway: "#84cc16", // lime (accent-leaf)
+      safe_walkway: "#84cc16", // lime
+      stairs: "#ef4444", // red (accessible-low)
+      obstacle: "#ef4444", // red
+    };
+    
+    const normalizedType = type.toLowerCase().replace(/\s+/g, "_");
+    return typeMap[normalizedType] || "#6b7280"; // default gray
+  };
+
+  // Map type -> emoji for markers and legend
+  const getMarkerEmoji = (type: string): string => {
+    const t = type.toLowerCase().replace(/\s+/g, "_");
+    const map: Record<string, string> = {
+      ramp: "♿",
+      elevator: "🛗",
+      lift: "🛗",
+      tactile_path: "🦯",
+      tactile: "🦯",
+      walkway: "🚶",
+      safe_walkway: "🚶",
+      stairs: "🪜",
+      obstacle: "🪜",
+    };
+    return map[t] || "📍";
+  };
+
+  const getReadableType = (type: string) => {
+    return type
+      .toString()
+      .replace(/_/g, " ")
+      .split(" ")
+      .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+      .join(" ");
+  };
+
+  // Load accessibility markers from database
+  const loadMarkers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("accessible_places")
+        .select("*");
+
+      if (error) throw error;
+
+      // If no data from DB, fall back to a few sample markers in Maharashtra so markers are visible
+      const samplePlaces = [
+        {
+          id: "mumbai-sample",
+          type: "ramp",
+          description: "Marine Drive - sample accessible ramp",
+          lat: 19.0760,
+          lng: 72.8777,
+          rating: 4,
+          verified: true,
+        },
+        // Multiple specific sample markers in Shivajinagar, Pune (helpful for differently-abled testing)
+        {
+          id: "shivajinagar-ramp-1",
+          type: "ramp",
+          description: "Accessible ramp near Shivajinagar bus stop",
+          lat: 18.5212,
+          lng: 73.8558,
+          rating: 4,
+          verified: true,
+        },
+        {
+          id: "shivajinagar-elevator-1",
+          type: "elevator",
+          description: "Elevator access at commercial complex, Shivajinagar",
+          lat: 18.5219,
+          lng: 73.8565,
+          rating: 3,
+          verified: false,
+        },
+        {
+          id: "shivajinagar-tactile-1",
+          type: "tactile_path",
+          description: "Tactile walking path towards the Shivajinagar market",
+          lat: 18.5206,
+          lng: 73.8576,
+          rating: 3,
+          verified: false,
+        },
+        {
+          id: "shivajinagar-walkway-1",
+          type: "walkway",
+          description: "Safe walkway with ramps along Main Rd, Shivajinagar",
+          lat: 18.5225,
+          lng: 73.8580,
+          rating: 4,
+          verified: true,
+        },
+        {
+          id: "shivajinagar-stairs-1",
+          type: "stairs",
+          description: "Stair access (note: not accessible)",
+          lat: 18.5210,
+          lng: 73.8587,
+          rating: 2,
+          verified: false,
+        },
+        {
+          id: "nagpur-sample",
+          type: "walkway",
+          description: "Futala Lake - sample accessible walkway",
+          lat: 21.1458,
+          lng: 79.0882,
+          rating: 4,
+          verified: false,
+        },
+      ];
+
+      // Demo markers for presentation — concentrated around Pune (Shivajinagar) so judges see many points
+      const demoMarkers = (() => {
+        const baseLat = 18.5212; // Shivajinagar center approx
+        const baseLng = 73.8560;
+        const types = ["ramp", "tactile_path", "walkway", "elevator", "stairs", "obstacle"];
+        const demo: any[] = [];
+
+        // generate a grid of sample demo markers close to Shivajinagar (5x6 = 30 markers)
+        let idCounter = 1;
+        for (let r = -2; r <= 2; r++) {
+          for (let c = -2; c <= 3; c++) {
+            const lat = +(baseLat + r * 0.0008 + (Math.random() - 0.5) * 0.0004).toFixed(6);
+            const lng = +(baseLng + c * 0.0008 + (Math.random() - 0.5) * 0.0004).toFixed(6);
+            const t = types[(idCounter - 1) % types.length];
+            demo.push({
+              id: `demo_pune_${idCounter}`,
+              type: t,
+              description: `Demo ${getReadableType(t)} — demonstration marker ${idCounter}`,
+              lat,
+              lng,
+              rating: (Math.floor(Math.random() * 3) + 3),
+              verified: idCounter % 4 === 0,
+            });
+            idCounter++;
+          }
+        }
+        return demo;
+      })();
+
+      // Always include demo markers as well so the map is full of visible points for demos
+      const placesToUse = (data && data.length > 0) ? data.concat(demoMarkers) : samplePlaces.concat(demoMarkers);
+
+      if (placesToUse && mapInstance.current) {
+        // Clear existing markers
+        markersRef.current.forEach((marker) => marker.remove());
+        markersRef.current = [];
+
+        // Add new markers
+        placesToUse.forEach((place) => {
+          const color = getMarkerColor(place.type);
+          
+          // Create custom marker element
+          const markerElement = document.createElement("div");
+          // Use slightly larger markers so emoji fits nicely
+          markerElement.style.width = "34px";
+          markerElement.style.height = "34px";
+          markerElement.style.borderRadius = "50%";
+          markerElement.style.backgroundColor = color;
+          markerElement.style.border = "3px solid white";
+          markerElement.style.boxShadow = "0 2px 6px rgba(0,0,0,0.25)";
+          markerElement.style.cursor = "pointer";
+          markerElement.style.display = "flex";
+          markerElement.style.alignItems = "center";
+          markerElement.style.justifyContent = "center";
+          markerElement.style.fontSize = "16px";
+          markerElement.style.lineHeight = "1";
+          markerElement.style.color = "white";
+          markerElement.innerHTML = getMarkerEmoji(place.type);
+
+          const marker = new tt.Marker({ element: markerElement })
+            .setLngLat([place.lng, place.lat])
+            .addTo(mapInstance.current);
+
+          // Add popup with place info
+          const popup = new tt.Popup({ offset: 25 }).setHTML(`
+            <div style="padding: 8px;">
+              <strong>${getMarkerEmoji(place.type)} ${getReadableType(place.type)}</strong>
+              ${place.description ? `<p style="margin: 4px 0;">${place.description}</p>` : ""}
+              ${place.rating ? `<p style="margin: 4px 0;">Rating: ${place.rating}/5</p>` : ""}
+              ${place.verified ? '<p style="margin: 4px 0; color: #10b981;">✓ Verified</p>' : ""}
+            </div>
+          `);
+
+          marker.setPopup(popup);
+          markersRef.current.push(marker);
+        });
+
+        if (data && data.length > 0) {
+          toast.success(`Loaded ${data.length} accessibility markers`);
+        } else {
+          toast.info("No markers in DB — showing sample Maharashtra markers (Mumbai / Pune / Nagpur)");
+        }
+
+        // If we used sample markers (DB empty) or markers were added, fit the map bounds
+        if (placesToUse.length > 0 && mapInstance.current) {
+          try {
+            const coords = placesToUse.map((p: any) => [p.lng, p.lat] as [number, number]);
+            const bounds = coords.reduce((b: any, c: [number, number]) => b.extend(c), new tt.LngLatBounds(coords[0], coords[0]));
+            mapInstance.current.fitBounds(bounds, { padding: 80 });
+          } catch (e) {
+            console.warn("Could not fit map bounds for markers", e);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error loading markers:", error);
+      toast.error("Failed to load accessibility markers");
+    }
+  };
+
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
+
+  const initMap = () => {
+    if (!mapElement.current) return;
+
+    setMapLoadError(null);
+    setMapLoading(true);
+
+    try {
+      // Initialize TomTom map
+      mapInstance.current = tt.map({
+        key: TOMTOM_API_KEY,
+        container: mapElement.current,
+        center: [77.5946, 12.9716], // Bangalore coordinates as default
+        zoom: 14,
+      });
+
+      // Add navigation controls
+      mapInstance.current.addControl(new tt.NavigationControl());
+
+      // When map finishes loading, proceed with markers and user location
+      mapInstance.current.on("load", () => {
+        setMapLoading(false);
+        setMapLoadError(null);
+        loadMarkers();
+        getUserLocation();
+      });
+
+      // Attach error handler if map emits errors
+      mapInstance.current.on("error", (err: any) => {
+        console.error("TomTom map error event:", err);
+        setMapLoading(false);
+        setMapLoadError("TomTom reported an error while loading the map.");
+      });
+
+      // Safety timeout: if still loading after X seconds, treat as failure
+      setTimeout(() => {
+        if (mapLoading && !mapInstance.current?.isStyleLoaded?.()) {
+          console.warn("Map still loading after timeout; marking load error");
+          setMapLoading(false);
+          setMapLoadError("Map timed out while loading. Check API key / network / allowed origins.");
+        }
+      }, 8000);
+    } catch (e) {
+      console.error("Failed to init map:", e);
+      setMapLoadError((e as any)?.message || String(e));
+      setMapLoading(false);
+    }
+  };
 
   useEffect(() => {
-    let mapInstance: tt.Map | null = null;
-
-    const initMap = async () => {
-      if (!mapContainerRef.current) return;
-
-      try {
-        mapInstance = tt.map({
-          key: TOMTOM_API_KEY,
-          container: mapContainerRef.current,
-          center: [73.84854, 18.53075], // Model Colony, Pune
-          zoom: 15,
-        });
-
-        mapInstance.on("load", () => {
-          setMap(mapInstance);
-          setLoading(false);
-          fetchAndDisplayMarkers(mapInstance);
-        });
-
-        mapInstance.on("click", (e) => {
-          handleMapClick(e.lngLat, mapInstance!);
-        });
-
-        mapInstance.addControl(new tt.FullscreenControl());
-        mapInstance.addControl(new tt.NavigationControl());
-
-      } catch (error) {
-        console.error("Error initializing map:", error);
-        toast.error("Failed to load map");
-        setLoading(false);
-      }
-    };
-
     initMap();
 
     return () => {
-      if (mapInstance) {
-        mapInstance.remove();
+      markersRef.current.forEach((marker) => marker.remove());
+      if (userLocationMarkerRef.current) {
+        userLocationMarkerRef.current.remove();
+      }
+      if (destinationMarkerRef.current) {
+        destinationMarkerRef.current.remove();
+      }
+      if (accuracyCircleRef.current) {
+        accuracyCircleRef.current.remove();
+      }
+      removeRouteLayer(routeLayerRef.current);
+      removeRouteLayer(route1LayerRef.current);
+      removeRouteLayer(route2LayerRef.current);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+      if (mapInstance.current) {
+        mapInstance.current.remove();
       }
     };
   }, []);
 
-  const handleMapClick = (lngLat: tt.LngLat, mapInstance: tt.Map) => {
-    // We need to use refs or functional updates if we want to access latest state inside the callback closure if it's not recreated.
-    // However, for simplicity, we can rely on the fact that we are setting state.
-    // But wait, the event listener is added once. It won't see updated state variables if we use them directly.
-    // We should use a ref for the current step or just check if markers exist.
-    // Actually, let's just use a simple logic:
-    // If we don't have a start point stored (we can't easily check React state inside the listener without refs),
-    // but we can check if we have placed markers on the map? No, that's hard.
-    // Let's use a ref to track the "mode" or current points.
-
-    // For this implementation, I'll assume the user sets points sequentially.
-    // To make it work with React state in the event listener, we usually need to update the listener or use a ref.
-    // I will use a ref for the points to ensure the listener sees them.
+  // Helper function to remove route layer
+  const removeRouteLayer = (layerId: string | null) => {
+    if (layerId && mapInstance.current?.getLayer(layerId)) {
+      mapInstance.current.removeLayer(layerId);
+      if (mapInstance.current.getSource(layerId)) {
+        mapInstance.current.removeSource(layerId);
+      }
+    }
   };
 
-  // Re-implementing handleMapClick logic to work with React state is tricky with the map event listener closure.
-  // Instead, I will use a mutable ref to track the selection state.
-  const selectionState = useRef<{ start: tt.LngLat | null, end: tt.LngLat | null }>({ start: null, end: null });
+  // geolocation helper — get user location, watch for updates
+  const getUserLocation = () => {
+    // Cleanup
+    if (!navigator.geolocation) {
+      toast.error("Geolocation is not supported by your browser");
+      return;
+    }
 
-  useEffect(() => {
-    if (!map) return;
+    console.log("Starting high-accuracy location tracking...");
+    let isFirstLocation = true;
 
-    const onClick = (e: any) => {
-      const lngLat = e.lngLat;
+    // Helper to create / update an accuracy circle marker
+    const updateAccuracyCircle = (lng: number, lat: number, accuracy: number) => {
+      // Create or update a semi-transparent circle element as a marker
+      const radius = Math.max(accuracy, 10); // ensure minimum size
 
-      if (!selectionState.current.start) {
-        selectionState.current.start = lngLat;
-        setStartPoint({ lat: lngLat.lat, lng: lngLat.lng });
-        new tt.Marker({ color: "#22c55e" }).setLngLat(lngLat).addTo(map);
-        toast.info("Start point set. Click to set destination.");
-      } else if (!selectionState.current.end) {
-        selectionState.current.end = lngLat;
-        setEndPoint({ lat: lngLat.lat, lng: lngLat.lng });
-        new tt.Marker({ color: "#ef4444" }).setLngLat(lngLat).addTo(map);
-        toast.info("Destination set. Calculating route...");
+      const circleEl = document.createElement("div");
+      circleEl.style.width = `${Math.min(Math.max(radius / 2, 20), 400)}px`;
+      circleEl.style.height = circleEl.style.width;
+      circleEl.style.borderRadius = "50%";
+      circleEl.style.background = "rgba(59,130,246,0.12)";
+      circleEl.style.border = "2px solid rgba(59,130,246,0.22)";
+      circleEl.style.pointerEvents = "none";
 
-        calculateRoutes(
-          { lat: selectionState.current.start.lat, lng: selectionState.current.start.lng },
-          { lat: lngLat.lat, lng: lngLat.lng }
-        );
-      } else {
-        // Reset
-        selectionState.current.start = lngLat;
-        selectionState.current.end = null;
-        setStartPoint({ lat: lngLat.lat, lng: lngLat.lng });
-        setEndPoint(null);
-        setRoutes(null);
-
-        // Clear route layers
-        if (map.getLayer("normal-route")) map.removeLayer("normal-route");
-        if (map.getSource("normal-route")) map.removeSource("normal-route");
-        if (map.getLayer("accessible-route")) map.removeLayer("accessible-route");
-        if (map.getSource("accessible-route")) map.removeSource("accessible-route");
-
-        // Note: Markers are not easily cleared without tracking them. 
-        // For a perfect implementation we'd track marker instances.
-        // For now, we'll just add new ones. The old ones stay (minor bug for hackathon).
-        new tt.Marker({ color: "#22c55e" }).setLngLat(lngLat).addTo(map);
-        toast.info("New start point set.");
+      // Remove existing accuracy marker if present
+      if (accuracyCircleRef.current) {
+        accuracyCircleRef.current.remove();
+        accuracyCircleRef.current = null;
       }
+
+      accuracyCircleRef.current = new tt.Marker({ element: circleEl, anchor: "center" })
+        .setLngLat([lng, lat])
+        .addTo(mapInstance.current);
     };
 
-    map.on("click", onClick);
+    // Try a quick one-time getCurrentPosition so user sees a location immediately
+    navigator.geolocation.getCurrentPosition(
+      async (initialPos) => {
+        const { latitude, longitude, accuracy } = initialPos.coords;
+        if (mapInstance.current) {
+          // Create marker immediately
+          if (!userLocationMarkerRef.current) {
+            const userMarkerElement = document.createElement("div");
+            userMarkerElement.style.width = "24px";
+            userMarkerElement.style.height = "24px";
+            userMarkerElement.style.borderRadius = "50%";
+            userMarkerElement.style.backgroundColor = "#3b82f6";
+            userMarkerElement.style.border = "3px solid white";
+            userMarkerElement.style.boxShadow = "0 2px 8px rgba(59, 130, 246, 0.5)";
+            userMarkerElement.style.cursor = "pointer";
 
-    return () => {
-      map.off("click", onClick);
-    }
-  }, [map]);
+            userLocationMarkerRef.current = new tt.Marker({ element: userMarkerElement })
+              .setLngLat([longitude, latitude])
+              .addTo(mapInstance.current);
 
+            const popup = new tt.Popup({ offset: 25 }).setHTML(`
+              <div style="padding: 8px;">
+                <strong>📍 Your Location</strong>
+                <p style="margin: 4px 0; font-size: 12px;">Accuracy: ±${Math.round(accuracy)}m</p>
+              </div>
+            `);
+            userLocationMarkerRef.current.setPopup(popup);
 
-  const calculateRoutes = async (start: { lat: number; lng: number }, end: { lat: number; lng: number }) => {
+            mapInstance.current.flyTo({ center: [longitude, latitude], zoom: 16 });
+            toast.success(`Location found! Accuracy: ±${Math.round(accuracy)}m`);
+          } else {
+            // update existing marker position when marker is already created
+            userLocationMarkerRef.current.setLngLat([longitude, latitude]);
+          }
+
+          // store coordinates in state
+          setUserCoords({ lat: latitude, lng: longitude });
+
+          // reverse geocode once for a human readable address (helps confirm state/city)
+          try {
+            const r = await fetch(
+              `https://api.tomtom.com/search/2/reverseGeocode/${latitude},${longitude}.json?key=${TOMTOM_API_KEY}`
+            );
+            const reverse = await r.json();
+            if (reverse && reverse.address) {
+              // TomTom returns tentative address info at top-level address or results
+              let addressText = "";
+              if (reverse.address.freeformAddress) {
+                addressText = reverse.address.freeformAddress;
+              } else if (reverse.address.municipality) {
+                addressText = `${reverse.address.municipality}, ${reverse.address.countrySubdivision || ""}`.trim();
+              } else if (reverse.address.countrySubdivision) {
+                addressText = reverse.address.countrySubdivision;
+              }
+              if (addressText) setUserAddress(addressText);
+            } else if (reverse.results && reverse.results.length > 0) {
+              setUserAddress(reverse.results[0].address.freeformAddress || null);
+            }
+          } catch (e) {
+            console.warn("Reverse geocode failed", e);
+          }
+        
+
+          // Render an accuracy circle so users can visually see the uncertainty
+          updateAccuracyCircle(longitude, latitude, accuracy || 30);
+          isFirstLocation = false; // we've already centered
+        }
+      },
+      (err) => {
+        console.warn("getCurrentPosition failed, will fall back to watchPosition", err);
+        // Let watchPosition handle continuous updates / errors
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+
+    // Use watchPosition for real-time tracking with high accuracy
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        
+        console.log(`Location update: Lat ${latitude}, Lng ${longitude}, Accuracy: ${accuracy}m`);
+        
+        if (mapInstance.current) {
+          // Update or create accuracy circle
+          // Update or create an accuracy circle marker (visual representation only)
+          updateAccuracyCircle(longitude, latitude, accuracy);
+
+          if (userLocationMarkerRef.current) {
+            // Update existing marker position
+            userLocationMarkerRef.current.setLngLat([longitude, latitude]);
+            setUserCoords({ lat: latitude, lng: longitude });
+            
+            // Update popup with accuracy (keep existing popup if present)
+            const popup = new tt.Popup({ offset: 25 }).setHTML(`
+              <div style="padding: 8px;">
+                <strong>📍 Your Location</strong>
+                <p style="margin: 4px 0; font-size: 12px;">Accuracy: ±${Math.round(accuracy)}m</p>
+              </div>
+            `);
+            userLocationMarkerRef.current.setPopup(popup);
+          } else {
+            // Create custom marker for user location
+            const userMarkerElement = document.createElement("div");
+            userMarkerElement.style.width = "24px";
+            userMarkerElement.style.height = "24px";
+            userMarkerElement.style.borderRadius = "50%";
+            userMarkerElement.style.backgroundColor = "#3b82f6";
+            userMarkerElement.style.border = "3px solid white";
+            userMarkerElement.style.boxShadow = "0 2px 8px rgba(59, 130, 246, 0.5)";
+            userMarkerElement.style.cursor = "pointer";
+            userMarkerElement.style.animation = "pulse 2s infinite";
+
+            userLocationMarkerRef.current = new tt.Marker({ element: userMarkerElement })
+              .setLngLat([longitude, latitude])
+              .addTo(mapInstance.current);
+
+            const popup = new tt.Popup({ offset: 25 }).setHTML(`
+              <div style="padding: 8px;">
+                <strong>📍 Your Location</strong>
+                <p style="margin: 4px 0; font-size: 12px;">Accuracy: ±${Math.round(accuracy)}m</p>
+              </div>
+            `);
+            userLocationMarkerRef.current.setPopup(popup);
+            setUserCoords({ lat: latitude, lng: longitude });
+          }
+
+          // Only center map on first location update
+          if (isFirstLocation) {
+            mapInstance.current.flyTo({
+              center: [longitude, latitude],
+              zoom: 16,
+            });
+            toast.success(`Location found! Accuracy: ±${Math.round(accuracy)}m`);
+            isFirstLocation = false;
+          }
+        }
+      },
+      (error) => {
+        console.error("Geolocation error:", error);
+        let errorMessage = "Unable to get your location.";
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = "Location permission denied. Please enable location access.";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = "Location information unavailable.";
+            break;
+          case error.TIMEOUT:
+            errorMessage = "Location request timed out.";
+            break;
+        }
+        
+        toast.error(errorMessage);
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000,
+      }
+    );
+  };
+
+  // Manual locate function for UI button — we call getUserLocation and force reverse geocode
+  const handleManualLocate = async () => {
+    // call the same flow — the getUserLocation function will perform a getCurrentPosition
+    getUserLocation();
+  };
+
+  const calculateRoute = async (userLng: number, userLat: number, destLng: number, destLat: number) => {
     try {
-      const response = await fetch("http://localhost:8000/api/calculate-route", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start, end }),
-      });
+      // Set coordinates in context so RouteComparison can use them
+      setCoordinates(
+        { lat: userLat, lng: userLng },
+        { lat: destLat, lng: destLng }
+      );
 
-      if (!response.ok) throw new Error("Failed to calculate route");
+      // Remove previous routes
+      removeRouteLayer(routeLayerRef.current);
+      removeRouteLayer(route1LayerRef.current);
+      removeRouteLayer(route2LayerRef.current);
 
+      // Fetch routes with maxAlternatives to get 2 fastest routes
+      const response = await fetch(
+        `https://api.tomtom.com/routing/1/calculateRoute/${userLat},${userLng}:${destLat},${destLng}/json?key=${TOMTOM_API_KEY}&routeType=fastest&traffic=true&maxAlternatives=2`
+      );
       const data = await response.json();
-      setRoutes(data);
-      displayRoutes(data);
 
+      if (data.routes && data.routes.length > 0) {
+        // Get first route (fastest)
+        const route1 = data.routes[0];
+        const route1Coords = route1.legs[0].points.map((point: any) => [point.longitude, point.latitude]);
+        
+        // Draw Route 1 (Fastest) - Blue solid line
+        const route1Id = 'route1-' + Date.now();
+        route1LayerRef.current = route1Id;
+
+        mapInstance.current.addSource(route1Id, {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'LineString',
+              coordinates: route1Coords
+            }
+          }
+        });
+
+        mapInstance.current.addLayer({
+          id: route1Id,
+          type: 'line',
+          source: route1Id,
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': '#3b82f6', // blue
+            'line-width': 6,
+            'line-opacity': 0.9
+          }
+        });
+
+        // Get second route if available
+        let route2Coords: number[][] = [];
+        if (data.routes.length > 1) {
+          const route2 = data.routes[1];
+          route2Coords = route2.legs[0].points.map((point: any) => [point.longitude, point.latitude]);
+          
+          // Draw Route 2 (Alternative) - Grey dashed line
+          const route2Id = 'route2-' + Date.now();
+          route2LayerRef.current = route2Id;
+
+          mapInstance.current.addSource(route2Id, {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: route2Coords
+              }
+            }
+          });
+
+          mapInstance.current.addLayer({
+            id: route2Id,
+            type: 'line',
+            source: route2Id,
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': '#6b7280', // grey
+              'line-width': 5,
+              'line-opacity': 0.7,
+              'line-dasharray': [2, 2] // dashed line
+            }
+          });
+        }
+
+        // Calculate distance and time for Route 1 (fastest)
+        const distanceKm = (route1.summary.lengthInMeters / 1000).toFixed(2);
+        const durationMin = Math.round(route1.summary.travelTimeInSeconds / 60);
+        
+        setRouteInfo({
+          distance: `${distanceKm} km`,
+          duration: `${durationMin} min`
+        });
+
+        // Fit map to show both routes
+        const allCoords = route2Coords.length > 0 ? [...route1Coords, ...route2Coords] : route1Coords;
+        if (allCoords.length > 0) {
+          const bounds = allCoords.reduce((bounds: any, coord: any) => {
+            return bounds.extend(coord);
+          }, new tt.LngLatBounds(allCoords[0], allCoords[0]));
+
+          mapInstance.current.fitBounds(bounds, { padding: 80 });
+        }
+
+        if (data.routes.length > 1) {
+          toast.success(`2 fastest routes calculated: ${distanceKm} km, ${durationMin} min (Route 1)`);
+        } else {
+          toast.success(`Route calculated: ${distanceKm} km, ${durationMin} minutes`);
+        }
+      }
     } catch (error) {
-      console.error("Error calculating route:", error);
-      toast.error("Failed to calculate route");
+      console.error("Route calculation error:", error);
+      toast.error("Failed to calculate routes");
     }
   };
 
