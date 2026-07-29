@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Navigation2, TrendingDown, AlertTriangle, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/firebase/supabase/client";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "@/integrations/firebase/config";
 import { toast } from "sonner";
 import { useRoute } from "@/contexts/RouteContext";
 
@@ -74,7 +75,7 @@ async function fetchRoute(
   };
 }
 
-// Get all approved markers from Supabase
+// Get all approved markers from Firebase
 async function getAllMarkers() {
   const markers: Array<{
     lat: number;
@@ -85,11 +86,10 @@ async function getAllMarkers() {
   }> = [];
 
   try {
-    const { data: places, error: placesError } = await supabase
-      .from("accessible_places")
-      .select("*");
+    const placesSnapshot = await getDocs(collection(db, "accessible_places"));
+    const places = placesSnapshot.docs.map(doc => doc.data());
 
-    if (!placesError && places) {
+    if (places && places.length > 0) {
       places.forEach((place: any) => {
         const lat = place.lat || place.location?.lat;
         const lng = place.lng || place.location?.lng;
@@ -105,11 +105,10 @@ async function getAllMarkers() {
       });
     }
 
-    const { data: obstacles, error: obstaclesError } = await supabase
-      .from("obstacles")
-      .select("*");
+    const obstaclesSnapshot = await getDocs(collection(db, "obstacles"));
+    const obstacles = obstaclesSnapshot.docs.map(doc => doc.data());
 
-    if (!obstaclesError && obstacles) {
+    if (obstacles && obstacles.length > 0) {
       obstacles.forEach((obstacle: any) => {
         const lat = obstacle.lat || obstacle.location?.lat;
         const lng = obstacle.lng || obstacle.location?.lng;

@@ -4,11 +4,13 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Search, Layers, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import tt from "@tomtom-international/web-sdk-maps";
+import * as maplibregl from "maplibre-gl";
 import * as ttServices from "@tomtom-international/web-sdk-services";
-import "@tomtom-international/web-sdk-maps/dist/maps.css";
+import "maplibre-gl/dist/maplibre-gl.css";
 import markerIcon from "@/assets/marg-darshak-icon.png";
 import { useRoute } from "@/contexts/RouteContext";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "@/integrations/firebase/config";
 
 interface MapViewProps {
   onAddMarker: () => void;
@@ -85,11 +87,8 @@ const MapView = ({ onAddMarker, accessibilityMode = false }: MapViewProps) => {
   // Load accessibility markers from database
   const loadMarkers = async () => {
     try {
-      const { data, error } = await supabase
-        .from("accessible_places")
-        .select("*");
-
-      if (error) throw error;
+      const querySnapshot = await getDocs(collection(db, "accessible_places"));
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
 
       // If no data from DB, fall back to a few sample markers in Maharashtra so markers are visible
       const samplePlaces = [
