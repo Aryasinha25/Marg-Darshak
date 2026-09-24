@@ -16,12 +16,23 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
+        const timer = setTimeout(() => {
+            if (loading) {
+                console.warn("Firebase auth check timed out. Defaulting to unauthenticated.");
+                setLoading(false);
+            }
+        }, 5000);
+
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             setUser(currentUser);
             setLoading(false);
+            clearTimeout(timer);
         });
 
-        return () => unsubscribe();
+        return () => {
+            unsubscribe();
+            clearTimeout(timer);
+        };
     }, []);
 
     if (loading) {

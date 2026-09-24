@@ -4,9 +4,9 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Search, Layers, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import * as maplibregl from "maplibre-gl";
+import tt from "@tomtom-international/web-sdk-maps";
+import "@tomtom-international/web-sdk-maps/dist/maps.css";
 import * as ttServices from "@tomtom-international/web-sdk-services";
-import "maplibre-gl/dist/maplibre-gl.css";
 import markerIcon from "@/assets/marg-darshak-icon.png";
 import { useRoute } from "@/contexts/RouteContext";
 import { collection, getDocs } from "firebase/firestore";
@@ -25,6 +25,7 @@ const MapView = ({ onAddMarker, accessibilityMode = false }: MapViewProps) => {
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [routeInfo, setRouteInfo] = useState<{distance: string, duration: string} | null>(null);
+  const [routes, setRoutes] = useState<any>(null);
   const [userCoords, setUserCoords] = useState<{lat: number; lng: number} | null>(null);
   const [userAddress, setUserAddress] = useState<string | null>(null);
   const mapElement = useRef<HTMLDivElement>(null);
@@ -262,7 +263,7 @@ const MapView = ({ onAddMarker, accessibilityMode = false }: MapViewProps) => {
   const [mapLoadError, setMapLoadError] = useState<string | null>(null);
 
   const initMap = () => {
-    if (!mapElement.current) return;
+    if (!mapContainerRef.current) return;
 
     setMapLoadError(null);
     setMapLoading(true);
@@ -271,7 +272,7 @@ const MapView = ({ onAddMarker, accessibilityMode = false }: MapViewProps) => {
       // Initialize TomTom map
       mapInstance.current = tt.map({
         key: TOMTOM_API_KEY,
-        container: mapElement.current,
+        container: mapContainerRef.current,
         center: [77.5946, 12.9716], // Bangalore coordinates as default
         zoom: 14,
       });
@@ -825,7 +826,7 @@ const MapView = ({ onAddMarker, accessibilityMode = false }: MapViewProps) => {
 
         {/* Map Container */}
         <Card className="relative h-[600px] overflow-hidden">
-          {loading && (
+          {mapLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
