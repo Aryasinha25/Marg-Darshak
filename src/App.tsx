@@ -10,6 +10,7 @@ import Analytics from "./pages/Analytics";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
 import ARView from "./pages/ARView";
+import Leaderboard from "./pages/Leaderboard";
 
 const queryClient = new QueryClient();
 
@@ -60,6 +61,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <ARView />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/leaderboard"
+            element={
+              <ProtectedRoute>
+                <Leaderboard />
               </ProtectedRoute>
             }
           />

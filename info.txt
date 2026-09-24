@@ -1,0 +1,10 @@
+1.It absolutely adds unique value and is NOT just a wrapper. Standard map providers (Google Maps, Apple Maps, TomTom) solve the "macro-routing" problem: How do I get from Point A to Point B in a car? They completely fail at the "micro-routing" problem: How do I navigate the last 50 meters of this block if I am in a wheelchair and the sidewalk is broken?
+
+By utilizing TomTom Maps just as a base layer and overlaying your own custom-built infrastructure (the Community Feed, the Firebase Database, the Python API, and the specialized routing logic), you are solving a highly specific, niche problem that mega-corporations historically ignore because it doesn't scale easily without crowdsourced data. Your product provides a specialized data layer on top of a map, which is highly valuable.
+
+
+
+steps to run backend-
+python -m venv .venv
+
+.venv\Scripts\python.exe -m pip install -r requirements.txt

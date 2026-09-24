@@ -24,12 +24,15 @@ app.add_middleware(
 )
 
 # Initialize Firebase Admin SDK
+db = None
 try:
     cred = credentials.Certificate("serviceAccountKey.json")
     firebase_admin.initialize_app(cred)
+    db = firestore.client()
     print("Firebase Admin initialized successfully.")
 except Exception as e:
-    print(f"Error initializing Firebase Admin: {e}")
+    print(f"WARNING: Error initializing Firebase Admin: {e}")
+    print("WARNING: Firestore endpoints will fail until serviceAccountKey.json is provided.")
 
 # Models
 class Location(BaseModel):
@@ -44,6 +47,7 @@ class Submission(BaseModel):
     created_by: str
     status: str = "pending" # pending, approved, rejected
     image_url: Optional[str] = None
+    is_temporary: bool = False
 
 class SubmissionStatusUpdate(BaseModel):
     status: str
@@ -61,8 +65,7 @@ async def root():
 async def health_check():
     return {"status": "healthy"}
 
-# Firestore Collections
-db = firestore.client()
+# Firestore Collections (initialized in try block above)
 
 @app.post("/api/seed-data")
 async def seed_data():
@@ -168,6 +171,24 @@ async def update_submission_status(submission_id: str, status_update: Submission
                 data["category"] = "accessible"
 
             data["verified"] = True
+            
+            # GAMIFICATION: Add 10 points to the user who created this submission
+            user_id = data.get("created_by")
+            if user_id and user_id not in ["guest", "anonymous"]:
+                user_ref = db.collection("users").document(user_id)
+                user_doc = user_ref.get()
+                if user_doc.exists:
+                    user_ref.update({"points": firestore.Increment(10)})
+                else:
+                    # Create user document if it doesn't exist (with fallback email if not captured during signup)
+                    user_ref.set({"points": 10, "level": "Pathfinder Level 1", "email": "Anonymous Hero"})
+
+            if data.get("is_temporary"):
+                # Set expires_at to 24 hours from now
+                import datetime
+                expires_at = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+                data["expires_at"] = expires_at
+
             db.collection(target_collection).add(data)
             
         return {"status": "success", "message": f"Submission {status_update.status}"}
@@ -191,10 +212,26 @@ async def get_places():
             data["category"] = "accessible"
             places.append(data)
             
+        import datetime
+        now = datetime.datetime.utcnow()
+
         # Fetch Obstacles
         obs_docs = db.collection("obstacles").stream()
         for doc in obs_docs:
             data = doc.to_dict()
+            
+            # Check if it's an expired temporary obstacle
+            if data.get("is_temporary") and data.get("expires_at"):
+                # Firestore returns timestamps with tzinfo. Make `now` timezone-aware to compare.
+                expires_at = data["expires_at"]
+                if expires_at.tzinfo is None:
+                    # Fallback for naive datetime
+                    if expires_at < now:
+                        continue
+                else:
+                    if expires_at < datetime.datetime.now(datetime.timezone.utc):
+                        continue
+            
             data["id"] = doc.id
             data["category"] = "obstacle"
             places.append(data)
@@ -202,6 +239,27 @@ async def get_places():
         return places
     except Exception as e:
         print(f"Error fetching places: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/leaderboard")
+async def get_leaderboard():
+    """
+    Fetches the top users ordered by points for Gamification.
+    """
+    try:
+        if db is None:
+            return []
+        
+        users_docs = db.collection("users").order_by("points", direction=firestore.Query.DESCENDING).limit(10).stream()
+        leaderboard = []
+        for doc in users_docs:
+            data = doc.to_dict()
+            data["id"] = doc.id
+            leaderboard.append(data)
+            
+        return leaderboard
+    except Exception as e:
+        print(f"Error fetching leaderboard: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/predict-accessibility")

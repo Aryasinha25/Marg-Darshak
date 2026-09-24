@@ -10,13 +10,37 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 interface NavigationProps {
-  accessibilityMode: boolean;
-  onAccessibilityToggle: () => void;
+  accessibilityMode?: boolean;
+  onAccessibilityToggle?: () => void;
 }
 
-const Navigation = ({ accessibilityMode, onAccessibilityToggle }: NavigationProps) => {
+const Navigation = ({ accessibilityMode: propAccessibilityMode, onAccessibilityToggle: propOnAccessibilityToggle }: NavigationProps = {}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  
+  // Use local state if props are not provided (for pages other than Index)
+  const [localAccessibilityMode, setLocalAccessibilityMode] = useState(() => {
+    return document.documentElement.classList.contains("accessibility-mode");
+  });
+
+  const accessibilityMode = propAccessibilityMode !== undefined ? propAccessibilityMode : localAccessibilityMode;
+  
+  const handleAccessibilityToggle = () => {
+    const newValue = !accessibilityMode;
+    if (propOnAccessibilityToggle) {
+      propOnAccessibilityToggle();
+    } else {
+      setLocalAccessibilityMode(newValue);
+    }
+    
+    // Globally apply the CSS class to the HTML root for app-wide accessibility
+    if (newValue) {
+      document.documentElement.classList.add("accessibility-mode");
+    } else {
+      document.documentElement.classList.remove("accessibility-mode");
+    }
+  };
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -74,6 +98,15 @@ const Navigation = ({ accessibilityMode, onAccessibilityToggle }: NavigationProp
           <div className="hidden md:flex items-center gap-6">
 
             <NavLink
+              to="/leaderboard"
+              className="text-sm font-medium text-foreground hover:text-primary transition-all duration-200 relative group px-2 py-1"
+              activeClassName="text-primary"
+            >
+              Leaderboard
+              <span className="absolute bottom-0 left-0 w-full h-0.5 bg-primary scale-x-0 group-hover:scale-x-100 transition-transform origin-left" />
+            </NavLink>
+
+            <NavLink
               to="/admin"
               className="text-sm font-medium text-foreground hover:text-primary transition-all duration-200 relative group px-2 py-1"
               activeClassName="text-primary"
@@ -83,10 +116,9 @@ const Navigation = ({ accessibilityMode, onAccessibilityToggle }: NavigationProp
             </NavLink>
 
 
-            {/* Accessibility Toggle */}
             <div className="flex items-center gap-2 ml-4 pl-4 border-l border-border/50">
               <span className="text-sm font-medium">Accessibility</span>
-              <Switch checked={accessibilityMode} onCheckedChange={onAccessibilityToggle} />
+              <Switch checked={accessibilityMode} onCheckedChange={handleAccessibilityToggle} />
             </div>
 
             {user ? (
@@ -117,6 +149,14 @@ const Navigation = ({ accessibilityMode, onAccessibilityToggle }: NavigationProp
           <div className="md:hidden py-4 space-y-3 border-t border-border">
 
             <NavLink
+              to="/leaderboard"
+              className="block px-2 py-2 text-foreground hover:text-primary transition-colors"
+              onClick={() => setIsOpen(false)}
+            >
+              Leaderboard
+            </NavLink>
+
+            <NavLink
               to="/admin"
               className="block px-2 py-2 text-foreground hover:text-primary transition-colors"
               onClick={() => setIsOpen(false)}
@@ -126,7 +166,7 @@ const Navigation = ({ accessibilityMode, onAccessibilityToggle }: NavigationProp
 
             <div className="flex items-center justify-between px-2 py-2 border-t border-border mt-4 pt-4">
               <span className="text-sm font-medium">Accessibility Mode</span>
-              <Switch checked={accessibilityMode} onCheckedChange={onAccessibilityToggle} />
+              <Switch checked={accessibilityMode} onCheckedChange={handleAccessibilityToggle} />
             </div>
             <div className="pt-2">
               {user ? (

@@ -15,6 +15,8 @@ interface AddMarkerDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+import { Checkbox } from "@/components/ui/checkbox";
+
 const AddMarkerDialog = ({ open, onOpenChange }: AddMarkerDialogProps) => {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [gettingLocation, setGettingLocation] = useState(false);
@@ -24,6 +26,7 @@ const AddMarkerDialog = ({ open, onOpenChange }: AddMarkerDialogProps) => {
     type: "",
     description: "",
     rating: "3",
+    is_temporary: false,
   });
 
   const getCurrentLocation = () => {
@@ -182,6 +185,20 @@ const AddMarkerDialog = ({ open, onOpenChange }: AddMarkerDialogProps) => {
                 <SelectItem value="1">⭐ Very Poor</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-center space-x-2 py-2">
+            <Checkbox 
+              id="temporary" 
+              checked={formData.is_temporary}
+              onCheckedChange={(checked) => setFormData({ ...formData, is_temporary: checked === true })}
+            />
+            <Label
+              htmlFor="temporary"
+              className="text-sm font-normal leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              This is a temporary obstacle (expires in 24 hours)
+            </Label>
           </div>
 
           <div className="space-y-2">
